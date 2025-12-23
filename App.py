@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st  # Corregido: 'import' en minúsculas
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime, date, timedelta
@@ -8,17 +8,21 @@ import urllib.parse
 # ==========================================
 # 1. CONFIGURACIÓN DE CONEXIÓN
 # ==========================================
-URL_HOJA = "https://docs.google.com/spreadsheets/d/1--gIzJOWEYBHbjICf8Ca8pjv549G4ATCO8nFZAW4BMQ/edit?usp=drivesdk"
+# Se recomienda usar el enlace que termina solo en /edit
+URL_HOJA = "https://docs.google.com/spreadsheets/d/1--gIzJOWEYBHbjICf8Ca8pjv549G4ATCO8nFZAW4BMQ/edit"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def cargar_tabla(nombre_pestana):
     try:
+        # ttl="0" obliga a traer datos frescos de Google Sheets
         df = conn.read(spreadsheet=URL_HOJA, worksheet=nombre_pestana, ttl="0")
-        # Limpieza de espacios en nombres de columnas
-        df.columns = [str(c).strip() for c in df.columns]
+        if df is not None:
+            df.columns = [str(c).strip() for c in df.columns]
         return df
-    except:
+    except Exception as e:
+        # Esto te ayudará a ver el error real en la pantalla
+        st.sidebar.error(f"Error en pestaña '{nombre_pestana}': {e}")
         return pd.DataFrame()
 
 def guardar_fila(datos_dict, nombre_pestana):
@@ -38,9 +42,9 @@ def generar_ticket(datos, config):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, str(config['nombre']), ln=True, align='C')
+    pdf.cell(0, 10, str(config.get('nombre', 'Mi Taller')), ln=True, align='C')
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 5, f"{config['dir']} | Tel: {config['tel']}", ln=True, align='C')
+    pdf.cell(0, 5, f"{config.get('dir', '')} | Tel: {config.get('tel', '')}", ln=True, align='C')
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "ORDEN DE SERVICIO", ln=True, border='B')
@@ -52,7 +56,7 @@ def generar_ticket(datos, config):
     pdf.set_font("Arial", 'B', 9)
     pdf.cell(0, 5, "TERMINOS Y CONDICIONES:", ln=True)
     pdf.set_font("Arial", size=7)
-    pdf.multi_cell(0, 4, str(config['terminos']))
+    pdf.multi_cell(0, 4, str(config.get('terminos', 'N/A')))
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
@@ -65,6 +69,8 @@ if "autenticado" not in st.session_state:
 
 if not st.session_state.autenticado:
     st.title("🔐 Acceso al Sistema Taller")
+    
+    # Intentar cargar usuarios
     users_df = cargar_tabla("usuarios")
     
     u = st.text_input("Usuario")
@@ -72,9 +78,8 @@ if not st.session_state.autenticado:
     
     if st.button("Iniciar Sesión"):
         if not users_df.empty:
-            # BUSQUEDA SEGURA: Por posición de columna para evitar KeyError
-            # Col 0 = usuario, Col 1 = clave, Col 2 = rol
             try:
+                # Búsqueda por posición: A=0 (usuario), B=1 (clave), C=2 (rol)
                 valid = users_df[(users_df.iloc[:, 0].astype(str) == str(u)) & 
                                  (users_df.iloc[:, 1].astype(str) == str(p))]
                 if not valid.empty:
@@ -84,22 +89,22 @@ if not st.session_state.autenticado:
                     st.rerun()
                 else:
                     st.error("Usuario o clave incorrectos")
-            except:
-                st.error("Error: La hoja 'usuarios' no tiene el formato correcto (A:usuario, B:clave, C:rol)")
+            except Exception as e:
+                st.error(f"Estructura de tabla incorrecta: {e}")
         else:
-            st.error("No se pudo conectar con la base de datos de usuarios.")
+            st.error("No se pudo conectar con la base de datos de usuarios. Revisa los permisos de tu Google Sheet.")
     st.stop()
 
 # ==========================================
-# 4. INTERFAZ (Solo carga si está autenticado)
+# 4. INTERFAZ (Solo si está autenticado)
 # ==========================================
 try:
     conf_df = cargar_tabla("config")
-    config = conf_df.iloc[0]
+    config = conf_df.iloc[0].to_dict()
 except:
     config = {"nombre": "Mi Taller", "dir": "Ciudad", "tel": "000", "garantia": 30, "terminos": "N/A"}
 
-st.sidebar.title(f"🛠️ {config['nombre']}")
+st.sidebar.title(f"🛠️ {config.get('nombre')}")
 st.sidebar.write(f"Usuario: **{st.session_state.usuario}**")
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state.autenticado = False
@@ -127,20 +132,25 @@ with tabs[0]: # TALLER
     with c2:
         st.subheader("Equipos en Taller")
         if not df_rep.empty:
-            editado = st.data_editor(df_rep[df_rep['Estado'] != "Entregado"], hide_index=True)
+            # Filtramos solo los que no han sido entregados
+            pendientes = df_rep[df_rep['Estado'] != "Entregado"]
+            editado = st.data_editor(pendientes, hide_index=True, key="editor_taller")
             if st.button("Guardar Cambios"):
+                # Actualizar el DataFrame original con los cambios
                 df_rep.update(editado)
                 actualizar_tabla_completa(df_rep, "reparaciones")
+                st.success("Cambios guardados")
                 st.rerun()
 
 with tabs[1]: # FINANZAS
     if st.session_state.rol in ["admin", "owner"]:
+        st.subheader("Historial Completo")
         st.dataframe(df_rep)
     else:
-        st.warning("No tienes permiso.")
+        st.warning("No tienes permiso para ver finanzas.")
 
 with tabs[2]: # GARANTIAS
-    busq = st.text_input("Buscar Cliente:")
+    busq = st.text_input("Buscar Cliente para Garantía:")
     if busq and not df_rep.empty:
         res = df_rep[df_rep['Cliente'].astype(str).str.contains(busq, case=False)]
         st.write(res)
@@ -148,7 +158,11 @@ with tabs[2]: # GARANTIAS
 with tabs[3]: # AJUSTES
     if st.session_state.rol == "owner":
         with st.form("conf"):
-            n = st.text_input("Nombre", config['nombre'])
-            if st.form_submit_button("Actualizar"):
-                actualizar_tabla_completa(pd.DataFrame([{"nombre":n, "dir":config['dir'], "tel":config['tel'], "garantia":config['garantia'], "terminos":config['terminos']}]), "config")
+            n = st.text_input("Nombre del Negocio", config.get('nombre'))
+            d = st.text_input("Dirección", config.get('dir'))
+            t = st.text_input("Teléfono", config.get('tel'))
+            if st.form_submit_button("Actualizar Configuración"):
+                nueva_conf = pd.DataFrame([{"nombre":n, "dir":d, "tel":t, "garantia":config.get('garantia'), "terminos":config.get('terminos')}])
+                actualizar_tabla_completa(nueva_conf, "config")
+                st.success("Configuración actualizada")
                 st.rerun()
