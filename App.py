@@ -6,15 +6,16 @@ import urllib.parse
 import time
 
 # ==========================================
-# 1. CONFIGURACIÓN E INTERFAZ INICIAL
+# 1. CONFIGURACIÓN DE PÁGINA
 # ==========================================
 st.set_page_config(page_title="Taller Pro Cloud", layout="wide", page_icon="🛠️")
 
-# URL de tu hoja (Asegúrate que sea pública: "Cualquier persona con el enlace - Editor")
+# URL de tu hoja (Debe estar en "Cualquier persona con el enlace" como "Editor")
 URL_HOJA = "https://docs.google.com/spreadsheets/d/1--gIzJOWEYBHbjICf8Ca8pjv549G4ATCO8nFZAW4BMQ/edit?usp=sharing"
 
 def conectar():
     try:
+        # Intenta conectar usando los Secrets configurados en Streamlit Cloud
         conn = st.connection("gsheets", type=GSheetsConnection)
         return conn
     except Exception as e:
@@ -24,22 +25,22 @@ def conectar():
 conn = conectar()
 
 # ==========================================
-# 2. FUNCIONES DE BASE DE DATOS
+# 2. FUNCIONES DE CARGA Y GUARDADO
 # ==========================================
 def cargar_datos(pestana):
     try:
-        # ttl=0 para forzar la lectura de datos frescos siempre
+        # ttl=0 evita que Streamlit guarde datos viejos en memoria
         df = conn.read(spreadsheet=URL_HOJA, worksheet=pestana, ttl=0)
         if df is not None:
             df.columns = [str(c).strip() for c in df.columns]
             return df
         return pd.DataFrame()
-    except Exception:
+    except Exception as e:
+        st.warning(f"Aviso: No se pudo leer la pestaña '{pestana}'.")
         return pd.DataFrame()
 
 def guardar_datos(df_completo, pestana):
     try:
-        # Limpieza de columnas para la pestaña reparaciones
         if pestana == "reparaciones":
             columnas = ["Folio", "Fecha", "Cliente", "Telefono", "Equipo", "Falla", "Costo", "Abono", "Estado", "Tecnico"]
             for col in columnas:
@@ -52,141 +53,134 @@ def guardar_datos(df_completo, pestana):
         st.cache_data.clear()
         return True
     except Exception as e:
-        st.error(f"Error al guardar: {e}")
+        st.error(f"Error al guardar en Google Sheets: {e}")
         return False
 
 # ==========================================
-# 3. SISTEMA DE AUTENTICACIÓN
+# 3. SEGURIDAD (LOGIN)
 # ==========================================
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
+# Carga inicial de usuarios
 df_u = cargar_datos("usuarios")
 
 if not st.session_state.autenticado:
     st.title("🔐 Acceso al Sistema")
+    
     if df_u.empty:
-        st.error("Error: No se pudo cargar la tabla de usuarios. Verifica tu conexión y el nombre de la pestaña.")
+        st.error("❌ ERROR CRÍTICO: No se encontró la tabla de usuarios.")
+        st.info("Revisa que en tu Google Sheet la pestaña se llame 'usuarios' (todo minúsculas) y tenga datos.")
         st.stop()
     
     with st.container():
-        c1, c2, c3 = st.columns([1,2,1])
-        with c2:
+        _, col_login, _ = st.columns([1, 2, 1])
+        with col_login:
             with st.form("login"):
-                user = st.text_input("Usuario")
-                pw = st.text_input("Contraseña", type="password")
-                if st.form_submit_button("Ingresar"):
-                    # Validación: buscamos coincidencia en las dos primeras columnas
-                    match = df_u[(df_u.iloc[:,0].astype(str) == str(user)) & (df_u.iloc[:,1].astype(str) == str(pw))]
+                u = st.text_input("Usuario")
+                p = st.text_input("Clave", type="password")
+                if st.form_submit_button("Entrar"):
+                    # Verificación por posición de columna (0=usuario, 1=clave, 2=rol)
+                    match = df_u[(df_u.iloc[:,0].astype(str) == str(u)) & (df_u.iloc[:,1].astype(str) == str(p))]
                     if not match.empty:
                         st.session_state.autenticado = True
-                        st.session_state.usuario = user
-                        st.session_state.rol = str(match.iloc[0, 2]).lower() if len(match.columns) > 2 else "tecnico"
+                        st.session_state.usuario = u
+                        st.session_state.rol = str(match.iloc[0, 2]).lower()
                         st.rerun()
                     else:
-                        st.error("Credenciales incorrectas")
+                        st.error("Usuario o clave incorrectos")
     st.stop()
 
 # ==========================================
-# 4. DASHBOARD PRINCIPAL
+# 4. INTERFAZ PRINCIPAL
 # ==========================================
 df_conf = cargar_datos("config")
-nombre_taller = df_conf.iloc[0,0] if not df_conf.empty else "Mi Taller Pro"
+nombre_taller = df_conf.iloc[0,0] if not df_conf.empty else "Mi Taller Cloud"
 
 st.sidebar.title(f"🛠️ {nombre_taller}")
-st.sidebar.write(f"Usuario: **{st.session_state.usuario}**")
-st.sidebar.write(f"Rol: {st.session_state.rol.capitalize()}")
+st.sidebar.write(f"Conectado: **{st.session_state.usuario}**")
 
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state.autenticado = False
     st.rerun()
 
-t1, t2, t3 = st.tabs(["⚡ Recepción", "🔍 Historial", "⚙️ Configuración"])
+t1, t2, t3 = st.tabs(["⚡ Taller", "🔍 Historial", "⚙️ Ajustes"])
 
-# --- PESTAÑA 1: TALLER ---
+# --- PESTAÑA 1: RECEPCIÓN ---
 with t1:
     df_rep = cargar_datos("reparaciones")
-    col_izq, col_der = st.columns([1, 2])
+    c1, c2 = st.columns([1, 2])
     
-    with col_izq:
-        st.subheader("Nueva Orden")
-        # Generar Folio automático basado en el número de filas
-        nuevo_folio = f"T-{len(df_rep) + 1:03d}"
+    with c1:
+        st.subheader("Registrar Ingreso")
+        # El folio se basa en el total de filas + 1
+        folio_auto = f"F-{len(df_rep) + 1:03d}"
         
-        with st.form("registro_orden", clear_on_submit=True):
-            st.info(f"Folio: {nuevo_folio}")
-            cli = st.text_input("Nombre del Cliente")
-            tel = st.text_input("WhatsApp (ej: 521234567890)")
-            eq = st.text_input("Equipo (Marca/Modelo)")
-            fa = st.text_area("Descripción del problema")
-            co = st.number_input("Costo Estimado", min_value=0.0, step=50.0)
-            ab = st.number_input("Abono Inicial", min_value=0.0, step=50.0)
-            tec = st.selectbox("Asignar a", df_u.iloc[:,0].tolist() if not df_u.empty else ["General"])
+        with st.form("nuevo_registro", clear_on_submit=True):
+            st.code(f"Folio: {folio_auto}")
+            cliente = st.text_input("Cliente")
+            whatsapp = st.text_input("WhatsApp (Solo números)")
+            equipo = st.text_input("Equipo / Modelo")
+            falla = st.text_area("Falla reportada")
+            costo = st.number_input("Costo", 0.0)
+            abono = st.number_input("Abono", 0.0)
+            tecnico = st.selectbox("Técnico", df_u.iloc[:,0].tolist())
             
-            if st.form_submit_button("Registrar Equipo"):
-                nuevo_registro = pd.DataFrame([{
-                    "Folio": nuevo_folio, "Fecha": date.today().strftime("%d/%m/%Y"),
-                    "Cliente": cli, "Telefono": tel, "Equipo": eq, "Falla": fa,
-                    "Costo": co, "Abono": ab, "Estado": "Recibido", "Tecnico": tec
+            if st.form_submit_button("Guardar Orden"):
+                nueva_fila = pd.DataFrame([{
+                    "Folio": folio_auto, "Fecha": date.today().strftime("%d/%m/%Y"),
+                    "Cliente": cliente, "Telefono": whatsapp, "Equipo": equipo,
+                    "Falla": falla, "Costo": costo, "Abono": abono, 
+                    "Estado": "Recibido", "Tecnico": tecnico
                 }])
                 
-                if guardar_datos(pd.concat([df_rep, nuevo_registro], ignore_index=True), "reparaciones"):
-                    st.success("¡Orden guardada correctamente!")
+                if guardar_datos(pd.concat([df_rep, nueva_fila], ignore_index=True), "reparaciones"):
+                    st.success("✅ Guardado en la nube")
                     
-                    # Lógica de WhatsApp
-                    msg = f"Hola *{cli}*, tu equipo *{eq}* fue recibido con el Folio: *{nuevo_folio}*. Falla: {fa}. Abono: ${ab}."
-                    msg_url = urllib.parse.quote(msg)
-                    tel_wa = "".join(filter(str.isdigit, tel))
-                    link = f"https://wa.me/{tel_wa}?text={msg_url}"
-                    
-                    st.markdown(f'''<a href="{link}" target="_blank">
-                        <button style="width:100%; background-color:#25D366; color:white; border:none; padding:12px; border-radius:8px; cursor:pointer; font-weight:bold;">
-                        📱 Enviar Ticket por WhatsApp
-                        </button></a>''', unsafe_allow_html=True)
-                    
-                    if st.button("🔄 Refrescar Lista"):
-                        st.rerun()
-    
-    with col_der:
-        st.subheader("Equipos en Proceso")
+                    # Generar link de WhatsApp
+                    texto_wa = f"Hola {cliente}, recibimos tu {equipo}. Folio: {folio_auto}. Costo: ${costo}."
+                    url_wa = f"https://wa.me/{whatsapp}?text={urllib.parse.quote(texto_wa)}"
+                    st.markdown(f'[📱 Enviar comprobante por WhatsApp]({url_wa})')
+                    time.sleep(2)
+                    st.rerun()
+
+    with c2:
+        st.subheader("Equipos en Taller")
         if not df_rep.empty:
-            # Solo mostramos lo que no está entregado para agilizar
-            df_activos = df_rep[df_rep["Estado"] != "Entregado"]
-            df_editado = st.data_editor(df_activos, hide_index=True, use_container_width=True)
+            # Filtramos para mostrar solo pendientes o en proceso
+            df_vivos = df_rep[df_rep["Estado"] != "Entregado"]
+            df_edit = st.data_editor(df_vivos, hide_index=True, use_container_width=True)
             
-            if st.button("Actualizar Estados"):
-                # Combinamos los datos editados con los históricos (entregados)
-                df_historial = df_rep[df_rep["Estado"] == "Entregado"]
-                df_final = pd.concat([df_historial, df_editado]).drop_duplicates(subset="Folio", keep="last")
-                if guardar_datos(df_final, "reparaciones"):
-                    st.toast("Base de datos actualizada")
-                    time.sleep(1)
+            if st.button("Sincronizar Cambios"):
+                # Combinamos lo editado con lo que ya estaba entregado para no perder datos
+                df_entregados = df_rep[df_rep["Estado"] == "Entregado"]
+                df_total = pd.concat([df_entregados, df_edit]).drop_duplicates(subset="Folio", keep="last")
+                if guardar_datos(df_total, "reparaciones"):
+                    st.success("¡Datos actualizados!")
                     st.rerun()
 
 # --- PESTAÑA 2: HISTORIAL ---
 with t2:
-    st.subheader("Historial Completo")
-    busqueda = st.text_input("Filtrar por nombre, folio o equipo...")
+    st.subheader("Buscador Global")
+    query = st.text_input("Buscar por nombre o folio")
     if not df_rep.empty:
-        if busqueda:
-            df_res = df_rep[df_rep.astype(str).apply(lambda x: busqueda.lower() in x.str.lower().values, axis=1)]
-            st.dataframe(df_res, use_container_width=True, hide_index=True)
+        if query:
+            df_res = df_rep[df_rep.astype(str).apply(lambda x: query.lower() in x.str.lower().values, axis=1)]
+            st.dataframe(df_res, use_container_width=True)
         else:
-            st.dataframe(df_rep, use_container_width=True, hide_index=True)
+            st.dataframe(df_rep, use_container_width=True)
 
-# --- PESTAÑA 3: CONFIGURACIÓN ---
+# --- PESTAÑA 3: AJUSTES ---
 with t3:
     if st.session_state.rol == "admin":
-        st.subheader("Ajustes del Sistema")
-        with st.form("conf_t"):
-            n_nombre = st.text_input("Nombre Comercial", value=nombre_taller)
-            if st.form_submit_button("Guardar Cambios"):
-                if guardar_datos(pd.DataFrame([{"nombre": n_nombre}]), "config"):
-                    st.success("Nombre actualizado")
-                    st.rerun()
-        
+        st.subheader("Configuración de Administrador")
+        nuevo_nom = st.text_input("Nombre del Negocio", value=nombre_taller)
+        if st.button("Actualizar Nombre"):
+            if guardar_datos(pd.DataFrame([{"nombre": nuevo_nom}]), "config"):
+                st.success("Nombre actualizado")
+                st.rerun()
         st.divider()
-        st.write("### Usuarios del Sistema")
-        st.dataframe(df_u, use_container_width=True)
+        st.write("### Lista de Usuarios")
+        st.table(df_u)
     else:
-        st.warning("Acceso restringido. Solo administradores.")
+        st.warning("No tienes permisos para ver esta sección.")
