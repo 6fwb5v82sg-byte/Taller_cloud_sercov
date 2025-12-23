@@ -1,3 +1,20 @@
+def cargar_tabla(nombre_pestana):
+    try:
+        # Lee la hoja
+        df = conn.read(spreadsheet=URL_HOJA, worksheet=nombre_pestana, ttl="0")
+        
+        # LIMPIEZA AUTOMÁTICA:
+        # 1. Elimina filas/columnas totalmente vacías que a veces Google Sheets agrega
+        df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+        
+        # 2. Convierte los nombres de las columnas a minúsculas y quita espacios
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        
+        return df
+    except Exception as e:
+        st.error(f"Error cargando la pestaña '{nombre_pestana}': {e}")
+        return pd.DataFrame()
+
 import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
