@@ -9,7 +9,7 @@ import urllib.parse
 # 1. CONFIGURACIÓN DE CONEXIÓN
 # ==========================================
 # Se recomienda usar el enlace que termina solo en /edit
-URL_HOJA = "https://docs.google.com/spreadsheets/d/1--gIzJOWEYBHbjICf8Ca8pjv549G4ATCO8nFZAW4BMQ/edit"
+URL_HOJA = "https://docs.google.com/spreadsheets/d/1--gIzJOWEYBHbjICf8Ca8pjv549G4ATCO8nFZAW4BMQ/edit?usp=drivesdk"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
