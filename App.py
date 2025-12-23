@@ -1,20 +1,3 @@
-def cargar_tabla(nombre_pestana):
-    try:
-        # Lee la hoja
-        df = conn.read(spreadsheet=URL_HOJA, worksheet=nombre_pestana, ttl="0")
-        
-        # LIMPIEZA AUTOMÁTICA:
-        # 1. Elimina filas/columnas totalmente vacías que a veces Google Sheets agrega
-        df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
-        
-        # 2. Convierte los nombres de las columnas a minúsculas y quita espacios
-        df.columns = [str(c).strip().lower() for c in df.columns]
-        
-        return df
-    except Exception as e:
-        st.error(f"Error cargando la pestaña '{nombre_pestana}': {e}")
-        return pd.DataFrame()
-
 import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
@@ -25,14 +8,16 @@ import urllib.parse
 # ==========================================
 # 1. CONFIGURACIÓN DE CONEXIÓN
 # ==========================================
-# REEMPLAZA ESTE ENLACE POR EL DE TU GOOGLE SHEET (MODO EDITOR)
 URL_HOJA = "https://docs.google.com/spreadsheets/d/1--gIzJOWEYBHbjICf8Ca8pjv549G4ATCO8nFZAW4BMQ/edit?usp=drivesdk"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def cargar_tabla(nombre_pestana):
     try:
-        return conn.read(spreadsheet=URL_HOJA, worksheet=nombre_pestana, ttl="0")
+        df = conn.read(spreadsheet=URL_HOJA, worksheet=nombre_pestana, ttl="0")
+        # Limpieza de espacios en nombres de columnas
+        df.columns = [str(c).strip() for c in df.columns]
+        return df
     except:
         return pd.DataFrame()
 
@@ -47,55 +32,27 @@ def actualizar_tabla_completa(df_completo, nombre_pestana):
     st.cache_data.clear()
 
 # ==========================================
-# 2. FUNCIONES DE APOYO (PDF Y WHATSAPP)
+# 2. FUNCIONES DE APOYO
 # ==========================================
 def generar_ticket(datos, config):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, config['nombre'], ln=True, align='C')
+    pdf.cell(0, 10, str(config['nombre']), ln=True, align='C')
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 5, f"{config['dir']} | Tel: {config['tel']}", ln=True, align='C')
     pdf.ln(10)
-    
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "ORDEN DE SERVICIO", ln=True, border='B')
     pdf.set_font("Arial", size=10)
     for k, v in datos.items():
         pdf.cell(50, 7, f"{k}:", ln=0)
         pdf.cell(0, 7, str(v), ln=1)
-    
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 9)
     pdf.cell(0, 5, "TERMINOS Y CONDICIONES:", ln=True)
     pdf.set_font("Arial", size=7)
     pdf.multi_cell(0, 4, str(config['terminos']))
-    if not st.session_state.autenticado:
-    st.title("🔐 Acceso al Sistema Taller")
-    
-    # --- BLOQUE DE DIAGNÓSTICO ---
-    users_df = cargar_tabla("usuarios")
-    
-    if users_df.empty:
-        st.error("⚠️ La hoja 'usuarios' está vacía o no se encuentra.")
-    else:
-        st.info(f"Columnas detectadas en la hoja: {list(users_df.columns)}")
-        st.write("Vista previa de la tabla:", users_df.head(2))
-    # -----------------------------
-
-    u = st.text_input("Usuario")
-    p = st.text_input("Contraseña", type="password")
-    
-    if st.button("Iniciar Sesión"):
-        # Verificamos si la columna existe antes de filtrar para evitar el crash
-        if 'usuario' in users_df.columns and 'clave' in users_df.columns:
-            valid = users_df[(users_df['usuario'] == u) & (users_df['clave'] == p)]
-            # ... resto del código
-        else:
-            st.error("🚨 ERROR: No existe la columna 'usuario' en tu Google Sheet.")
-            st.write("Asegúrate de que la celda A1 diga: usuario")
-
-
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
@@ -108,120 +65,90 @@ if "autenticado" not in st.session_state:
 
 if not st.session_state.autenticado:
     st.title("🔐 Acceso al Sistema Taller")
+    users_df = cargar_tabla("usuarios")
+    
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
+    
     if st.button("Iniciar Sesión"):
-        users_df = cargar_tabla("usuarios")
-        valid = users_df[(users_df['usuario'] == u) & (users_df['clave'] == p)]
-        if not valid.empty:
-            st.session_state.autenticado = True
-            st.session_state.usuario = u
-            st.session_state.rol = valid.iloc[0]['rol']
-            st.rerun()
+        if not users_df.empty:
+            # BUSQUEDA SEGURA: Por posición de columna para evitar KeyError
+            # Col 0 = usuario, Col 1 = clave, Col 2 = rol
+            try:
+                valid = users_df[(users_df.iloc[:, 0].astype(str) == str(u)) & 
+                                 (users_df.iloc[:, 1].astype(str) == str(p))]
+                if not valid.empty:
+                    st.session_state.autenticado = True
+                    st.session_state.usuario = u
+                    st.session_state.rol = str(valid.iloc[0, 2]).lower()
+                    st.rerun()
+                else:
+                    st.error("Usuario o clave incorrectos")
+            except:
+                st.error("Error: La hoja 'usuarios' no tiene el formato correcto (A:usuario, B:clave, C:rol)")
         else:
-            st.error("Usuario o clave incorrectos")
+            st.error("No se pudo conectar con la base de datos de usuarios.")
     st.stop()
 
 # ==========================================
-# 4. INTERFAZ Y PESTAÑAS
+# 4. INTERFAZ (Solo carga si está autenticado)
 # ==========================================
-# Cargar Configuración
 try:
-    config = cargar_tabla("config").iloc[0]
+    conf_df = cargar_tabla("config")
+    config = conf_df.iloc[0]
 except:
     config = {"nombre": "Mi Taller", "dir": "Ciudad", "tel": "000", "garantia": 30, "terminos": "N/A"}
 
 st.sidebar.title(f"🛠️ {config['nombre']}")
-st.sidebar.write(f"Rol: **{st.session_state.rol.upper()}**")
+st.sidebar.write(f"Usuario: **{st.session_state.usuario}**")
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state.autenticado = False
     st.rerun()
 
 tabs = st.tabs(["⚡ Taller", "📊 Finanzas", "🔍 Garantías", "⚙️ Ajustes"])
 
-# --- TAB 1: OPERACIONES ---
-with tabs[0]:
+with tabs[0]: # TALLER
     df_rep = cargar_tabla("reparaciones")
     c1, c2 = st.columns([1, 2])
-    
     with c1:
         st.subheader("Nueva Orden")
         with st.form("registro", clear_on_submit=True):
             cli = st.text_input("Cliente")
-            tel = st.text_input("WhatsApp (ej: 521...)")
+            tel = st.text_input("WhatsApp")
             eq = st.text_input("Equipo")
             fl = st.text_area("Falla")
-            co = st.number_input("Costo Total $", min_value=0.0)
+            co = st.number_input("Costo $", min_value=0.0)
             ab = st.number_input("Abono $", min_value=0.0)
-            if st.form_submit_button("Registrar Equipo"):
-                nueva = {
-                    "Fecha": date.today().strftime("%Y-%m-%d"),
-                    "Cliente": cli, "Telefono": tel, "Equipo": eq, 
-                    "Falla": fl, "Costo": co, "Abono": ab, 
-                    "Estado": "Recibido", "Notas": ""
-                }
+            if st.form_submit_button("Registrar"):
+                nueva = {"Fecha": date.today().strftime("%Y-%m-%d"), "Cliente": cli, "Telefono": tel, 
+                         "Equipo": eq, "Falla": fl, "Costo": co, "Abono": ab, "Estado": "Recibido"}
                 guardar_fila(nueva, "reparaciones")
-                st.success("Guardado en la nube")
                 st.rerun()
-
     with c2:
         st.subheader("Equipos en Taller")
         if not df_rep.empty:
-            df_activas = df_rep[df_rep['Estado'] != "Entregado"].copy()
-            # Bloqueo por rol
-            bloqueo = ["Fecha", "Cliente", "Equipo"]
-            if st.session_state.rol == "tecnico": 
-                bloqueo.extend(["Costo", "Abono"])
-            
-            editado = st.data_editor(df_activas, disabled=bloqueo, hide_index=True)
-            if st.button("💾 Guardar Cambios"):
+            editado = st.data_editor(df_rep[df_rep['Estado'] != "Entregado"], hide_index=True)
+            if st.button("Guardar Cambios"):
                 df_rep.update(editado)
                 actualizar_tabla_completa(df_rep, "reparaciones")
                 st.rerun()
-            
-            # WhatsApp y PDF
-            st.divider()
-            sel = st.selectbox("Acciones para cliente:", df_activas['Cliente'].unique() if not df_activas.empty else [])
-            if sel:
-                fila = df_activas[df_activas['Cliente'] == sel].iloc[0]
-                msg = f"Hola {fila['Cliente']}, tu {fila['Equipo']} está {fila['Estado']}. Saldo: ${fila['Costo']-fila['Abono']}"
-                link = f"https://wa.me/{fila['Telefono']}?text={urllib.parse.quote(msg)}"
-                st.link_button(f"Enviar WhatsApp a {sel}", link)
-                st.download_button("Descargar Ticket PDF", generar_ticket(fila.to_dict(), config), f"ticket_{sel}.pdf")
 
-# --- TAB 2: FINANZAS (ADMIN/OWNER) ---
-with tabs[1]:
+with tabs[1]: # FINANZAS
     if st.session_state.rol in ["admin", "owner"]:
-        if not df_rep.empty:
-            df_rep['Costo'] = pd.to_numeric(df_rep['Costo'])
-            df_rep['Abono'] = pd.to_numeric(df_rep['Abono'])
-            st.metric("Total en Caja (Abonos)", f"${df_rep['Abono'].sum():,.2f}")
-            st.dataframe(df_rep)
+        st.dataframe(df_rep)
     else:
-        st.warning("Acceso restringido")
+        st.warning("No tienes permiso.")
 
-# --- TAB 3: GARANTÍAS ---
-with tabs[2]:
+with tabs[2]: # GARANTIAS
     busq = st.text_input("Buscar Cliente:")
     if busq and not df_rep.empty:
-        res = df_rep[df_rep['Cliente'].str.contains(busq, case=False)]
-        for _, r in res.iterrows():
-            fv = pd.to_datetime(r['Fecha']) + timedelta(days=int(config['garantia']))
-            v = datetime.now() > fv
-            st.write(f"**{r['Equipo']}** | Garantía: {'❌ Vencida' if v else '✅ Activa'} (Vence: {fv.date()})")
+        res = df_rep[df_rep['Cliente'].astype(str).str.contains(busq, case=False)]
+        st.write(res)
 
-# --- TAB 4: AJUSTES (SOLO OWNER) ---
-with tabs[3]:
+with tabs[3]: # AJUSTES
     if st.session_state.rol == "owner":
-        st.subheader("Configuración Global")
         with st.form("conf"):
-            n = st.text_input("Nombre Taller", config['nombre'])
-            d = st.text_input("Dirección", config['dir'])
-            t = st.text_input("Teléfono", config['tel'])
-            g = st.number_input("Días Garantía", value=int(config['garantia']))
-            te = st.text_area("Términos", config['terminos'])
-            if st.form_submit_button("Actualizar Empresa"):
-                actualizar_tabla_completa(pd.DataFrame([{"nombre":n, "dir":d, "tel":t, "garantia":g, "terminos":te}]), "config")
+            n = st.text_input("Nombre", config['nombre'])
+            if st.form_submit_button("Actualizar"):
+                actualizar_tabla_completa(pd.DataFrame([{"nombre":n, "dir":config['dir'], "tel":config['tel'], "garantia":config['garantia'], "terminos":config['terminos']}]), "config")
                 st.rerun()
-    else:
-        st.warning("Solo el dueño puede editar esto.")
