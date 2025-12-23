@@ -70,7 +70,32 @@ def generar_ticket(datos, config):
     pdf.cell(0, 5, "TERMINOS Y CONDICIONES:", ln=True)
     pdf.set_font("Arial", size=7)
     pdf.multi_cell(0, 4, str(config['terminos']))
+    if not st.session_state.autenticado:
+    st.title("🔐 Acceso al Sistema Taller")
     
+    # --- BLOQUE DE DIAGNÓSTICO ---
+    users_df = cargar_tabla("usuarios")
+    
+    if users_df.empty:
+        st.error("⚠️ La hoja 'usuarios' está vacía o no se encuentra.")
+    else:
+        st.info(f"Columnas detectadas en la hoja: {list(users_df.columns)}")
+        st.write("Vista previa de la tabla:", users_df.head(2))
+    # -----------------------------
+
+    u = st.text_input("Usuario")
+    p = st.text_input("Contraseña", type="password")
+    
+    if st.button("Iniciar Sesión"):
+        # Verificamos si la columna existe antes de filtrar para evitar el crash
+        if 'usuario' in users_df.columns and 'clave' in users_df.columns:
+            valid = users_df[(users_df['usuario'] == u) & (users_df['clave'] == p)]
+            # ... resto del código
+        else:
+            st.error("🚨 ERROR: No existe la columna 'usuario' en tu Google Sheet.")
+            st.write("Asegúrate de que la celda A1 diga: usuario")
+
+
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
