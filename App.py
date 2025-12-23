@@ -9,7 +9,7 @@ import urllib.parse
 # 1. CONFIGURACIÓN DE CONEXIÓN
 # ==========================================
 # REEMPLAZA ESTE ENLACE POR EL DE TU GOOGLE SHEET (MODO EDITOR)
-URL_HOJA = "https://docs.google.com/spreadsheets/d/1--gIzJOWEYBHbjICf8Ca8pjv549G4ATCO8nFZAW4BMQ/edit?usp=drivesdk"
+URL_HOJA = https://docs.google.com/spreadsheets/d/1--gIzJOWEYBHbjICf8Ca8pjv549G4ATCO8nFZAW4BMQ/edit?usp=drivesdk
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
